@@ -358,7 +358,8 @@ int RGWLC::handle_multipart_expiration(RGWRados::Bucket *target, const map<strin
     do {
       objs.clear();
       list_op.params.marker = list_op.get_next_marker();
-      ret = list_op.list_objects(1000, &objs, NULL, &is_truncated);
+      if(list_type != 2)ret = list_op.list_objects(1000, &objs, NULL, &is_truncated);
+      else ret = list_op.list_objects_v2(1000, &objs, NULL, &is_truncated);
       if (ret < 0) {
           if (ret == (-ENOENT))
             return 0;
@@ -440,7 +441,9 @@ public:
   }
 
   int fetch() {
-    int ret = list_op.list_objects(1000, &objs, NULL, &is_truncated);
+    int ret ;
+    if(list_type != 2) ret = list_op.list_objects(1000, &objs, NULL, &is_truncated);
+    else ret = list_op.list_objects_v2(1000, &objs, NULL, &is_truncated);
     if (ret < 0) {
       return ret;
     }

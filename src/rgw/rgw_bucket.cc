@@ -548,7 +548,8 @@ int rgw_remove_bucket(RGWRados *store, rgw_bucket& bucket, bool delete_children)
   do {
     objs.clear();
 
-    ret = list_op.list_objects(max, &objs, &common_prefixes, &is_truncated);
+    if(list_type != 2)ret = list_op.list_objects(max, &objs, &common_prefixes, &is_truncated);
+    else ret = list_op.list_objects_v2(max, &objs, &common_prefixes, &is_truncated);
     if (ret < 0)
       return ret;
 
@@ -663,7 +664,8 @@ int rgw_remove_bucket_bypass_gc(RGWRados *store, rgw_bucket& bucket,
 
   while (is_truncated) {
     objs.clear();
-    ret = list_op.list_objects(max, &objs, &common_prefixes, &is_truncated);
+    if(list_type != 2)ret = list_op.list_objects(max, &objs, &common_prefixes, &is_truncated);
+    else ret = list_op.list_objects_v2(max, &objs, &common_prefixes, &is_truncated);
     if (ret < 0)
       return ret;
 
@@ -1064,7 +1066,9 @@ int RGWBucket::check_bad_index_multipart(RGWBucketAdminOpState& op_state,
 
   do {
     vector<rgw_bucket_dir_entry> result;
-    int r = list_op.list_objects(max, &result, &common_prefixes, &is_truncated);
+    int r ;
+    if(list_type != 2)list_op.list_objects(max, &result, &common_prefixes, &is_truncated);
+    else list_op.list_objects_v2(max, &result, &common_prefixes, &is_truncated);
     if (r < 0) {
       set_err_msg(err_msg, "failed to list objects in bucket=" + bucket.name +
               " err=" +  cpp_strerror(-r));

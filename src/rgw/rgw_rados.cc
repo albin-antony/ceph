@@ -2594,6 +2594,174 @@ done:
   return 0;
 } // list_objects_ordered
 
+int RGWRados::Bucket::List::list_objects_v2_ordered(int64_t max,
+             vector<rgw_bucket_dir_entry> *result,
+             map<string, bool> *common_prefixes,
+             bool *is_truncated)
+{
+  RGWRados *store = target->get_store();
+  CephContext *cct = store->ctx();
+  int shard_id = target->get_shard_id();
+
+  int count = 0;
+  bool truncated = true;
+  int read_ahead = std::max(cct->_conf->rgw_list_bucket_min_readahead,max);
+
+  result->clear();
+
+  rgw_obj_key marker_obj(params.marker.name, params.marker.instance, params.ns);
+  rgw_obj_index_key cur_marker;
+  marker_obj.get_index_key(&cur_marker);
+
+  rgw_obj_key end_marker_obj(params.end_marker.name, params.end_marker.instance,
+                             params.ns);
+  rgw_obj_index_key cur_end_marker;
+  end_marker_obj.get_index_key(&cur_end_marker);
+  const bool cur_end_marker_valid = !params.end_marker.empty();
+
+  rgw_obj_key prefix_obj(params.prefix);
+  prefix_obj.ns = params.ns;
+  string cur_prefix = prefix_obj.get_index_key_name();
+
+  string bigger_than_delim;
+
+  if (!params.delim.empty()) {
+    unsigned long val = decode_utf8((unsigned char *)params.delim.c_str(),
+            params.delim.size());
+    char buf[params.delim.size() + 16];
+    int r = encode_utf8(val + 1, (unsigned char *)buf);
+    if (r < 0) {
+      ldout(cct,0) << "ERROR: encode_utf8() failed" << dendl;
+      return -EINVAL;
+    }
+    buf[r] = '\0';
+
+    bigger_than_delim = buf;
+
+    /* if marker points at a common prefix, fast forward it into its upperbound string */
+    int delim_pos = cur_marker.name.find(params.delim, cur_prefix.size());
+    if (delim_pos >= 0) {
+      string s = cur_marker.name.substr(0, delim_pos);
+      s.append(bigger_than_delim);
+      cur_marker = s;
+    }
+  }
+
+  string skip_after_delim;
+  while (truncated && count <= max) {
+    if (skip_after_delim > cur_marker.name) {
+      cur_marker = skip_after_delim;
+      ldout(cct, 20) << "setting cur_marker=" << cur_marker.name << "[" << cur_marker.instance << "]" << dendl;
+    }
+    std::map<string, rgw_bucket_dir_entry> ent_map;
+    int r = store->cls_bucket_list_ordered(target->get_bucket_info(),
+             shard_id,
+             cur_marker,
+             cur_prefix,
+             read_ahead + 1 - count,
+             params.list_versions,
+             ent_map,
+             &truncated,
+             &cur_marker);
+    if (r < 0)
+      return r;
+
+    for (auto eiter = ent_map.begin(); eiter != ent_map.end(); ++eiter) {
+      rgw_bucket_dir_entry& entry = eiter->second;
+      rgw_obj_index_key index_key = entry.key;
+
+      rgw_obj_key obj(index_key);
+
+      /* note that parse_raw_oid() here will not set the correct
+       * object's instance, as rgw_obj_index_key encodes that
+       * separately. We don't need to set the instance because it's
+       * not needed for the checks here and we end up using the raw
+       * entry for the return vector
+       */
+      bool valid = rgw_obj_key::parse_raw_oid(index_key.name, &obj);
+      if (!valid) {
+        ldout(cct, 0) << "ERROR: could not parse object name: " << obj.name << dendl;
+        continue;
+      }
+      bool check_ns = (obj.ns == params.ns);
+      if (!params.list_versions && !entry.is_visible()) {
+        continue;
+      }
+
+      if (params.enforce_ns && !check_ns) {
+        if (!params.ns.empty()) {
+          /* we've iterated past the namespace we're searching -- done now */
+          truncated = false;
+          goto done;
+        }
+
+        /* we're not looking at the namespace this object is in, next! */
+        continue;
+      }
+
+      if (cur_end_marker_valid && cur_end_marker <= index_key) {
+        truncated = false;
+        goto done;
+      }
+
+      if (count < max) {
+        params.marker = index_key;
+        next_marker = index_key;
+      }
+
+      if (params.filter && !params.filter->filter(obj.name, index_key.name))
+        continue;
+
+      if (params.prefix.size() &&
+    (obj.name.compare(0, params.prefix.size(), params.prefix) != 0))
+        continue;
+
+      if (!params.delim.empty()) {
+        int delim_pos = obj.name.find(params.delim, params.prefix.size());
+
+        if (delim_pos >= 0) {
+          string prefix_key = obj.name.substr(0, delim_pos + 1);
+
+          if (common_prefixes &&
+              common_prefixes->find(prefix_key) == common_prefixes->end()) {
+            if (count >= max) {
+              truncated = true;
+              goto done;
+            }
+            next_marker = prefix_key;
+            (*common_prefixes)[prefix_key] = true;
+
+            int marker_delim_pos = cur_marker.name.find(params.delim, cur_prefix.size());
+
+            skip_after_delim = cur_marker.name.substr(0, marker_delim_pos);
+            skip_after_delim.append(bigger_than_delim);
+
+            ldout(cct, 20) << "skip_after_delim=" << skip_after_delim << dendl;
+
+            count++;
+          }
+
+          continue;
+        }
+      }
+
+      if (count >= max) {
+        truncated = true;
+        goto done;
+      }
+
+      result->emplace_back(std::move(entry));
+      count++;
+    }
+  }
+
+done:
+  if (is_truncated)
+    *is_truncated = truncated;
+
+  return 0;
+} // list_objects_v2_ordered
+
 
 /**
  * Get listing of the objects in a bucket and allow the results to be out
@@ -2725,6 +2893,119 @@ done:
 
   return 0;
 } // list_objects_unordered
+
+int RGWRados::Bucket::List::list_objects_v2_unordered(int64_t max,
+               vector<rgw_bucket_dir_entry> *result,
+               map<string, bool> *common_prefixes,
+               bool *is_truncated)
+{
+  RGWRados *store = target->get_store();
+  CephContext *cct = store->ctx();
+  int shard_id = target->get_shard_id();
+
+  int count = 0;
+  bool truncated = true;
+
+  // read a few extra in each call to cls_bucket_list_unordered in
+  // case some are filtered out due to namespace matching, versioning,
+  // filtering, etc.
+  const int64_t max_read_ahead = 100;
+  const uint32_t read_ahead = uint32_t(max + std::min(max, max_read_ahead));
+
+  result->clear();
+
+  rgw_obj_key marker_obj(params.marker.name, params.marker.instance, params.ns);
+  rgw_obj_index_key cur_marker;
+  marker_obj.get_index_key(&cur_marker);
+
+  rgw_obj_key end_marker_obj(params.end_marker.name, params.end_marker.instance,
+                             params.ns);
+  rgw_obj_index_key cur_end_marker;
+  end_marker_obj.get_index_key(&cur_end_marker);
+  const bool cur_end_marker_valid = !params.end_marker.empty();
+
+  rgw_obj_key prefix_obj(params.prefix);
+  prefix_obj.ns = params.ns;
+  string cur_prefix = prefix_obj.get_index_key_name();
+
+  while (truncated && count <= max) {
+    std::vector<rgw_bucket_dir_entry> ent_list;
+    int r = store->cls_bucket_list_unordered(target->get_bucket_info(),
+               shard_id,
+               cur_marker,
+               cur_prefix,
+               read_ahead,
+               params.list_versions,
+               ent_list,
+               &truncated,
+               &cur_marker);
+    if (r < 0)
+      return r;
+
+    // NB: while regions of ent_list will be sorted, we have no
+    // guarantee that all items will be sorted since they can cross
+    // shard boundaries
+
+    for (auto& entry : ent_list) {
+      rgw_obj_index_key index_key = entry.key;
+      rgw_obj_key obj(index_key);
+
+      /* note that parse_raw_oid() here will not set the correct
+       * object's instance, as rgw_obj_index_key encodes that
+       * separately. We don't need to set the instance because it's
+       * not needed for the checks here and we end up using the raw
+       * entry for the return vector
+       */
+      bool valid = rgw_obj_key::parse_raw_oid(index_key.name, &obj);
+      if (!valid) {
+        ldout(cct, 0) << "ERROR: could not parse object name: " <<
+    obj.name << dendl;
+        continue;
+      }
+
+      if (!params.list_versions && !entry.is_visible()) {
+        continue;
+      }
+
+      if (params.enforce_ns && obj.ns != params.ns) {
+        continue;
+      }
+
+      if (cur_end_marker_valid && cur_end_marker <= index_key) {
+  // we're not guaranteed items will come in order, so we have
+  // to loop through all
+  continue;
+      }
+
+      if (count < max) {
+        params.marker = index_key;
+        next_marker = index_key;
+      }
+
+      if (params.filter && !params.filter->filter(obj.name, index_key.name))
+        continue;
+
+      if (params.prefix.size() &&
+    (0 != obj.name.compare(0, params.prefix.size(), params.prefix)))
+        continue;
+
+      if (count >= max) {
+        truncated = true;
+        goto done;
+      }
+
+      result->emplace_back(std::move(entry));
+      count++;
+    } // for (auto& entry : ent_list)
+  } // while (truncated && count <= max)
+
+done:
+  if (is_truncated)
+    *is_truncated = truncated;
+
+  return 0;
+} // list_objects_v2_unordered
+
 
 
 /**
@@ -3330,7 +3611,10 @@ int RGWRados::on_last_entry_in_listing(RGWBucketInfo& bucket_info,
     static constexpr int MAX_LIST_OBJS = 100;
     std::vector<rgw_bucket_dir_entry> entries(MAX_LIST_OBJS);
 
-    int ret = list_op.list_objects(MAX_LIST_OBJS, &entries, nullptr,
+    int ret ;
+    if(list_type != 2)  ret = list_op.list_objects(MAX_LIST_OBJS, &entries, nullptr,
+                                   &is_truncated);
+    else ret = list_op.list_objects_v2(MAX_LIST_OBJS, &entries, nullptr,
                                    &is_truncated);
     if (ret < 0) {
       return ret;

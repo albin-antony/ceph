@@ -1497,7 +1497,9 @@ static int iterate_user_manifest_parts(CephContext * const cct,
   MD5 etag_sum;
   do {
 #define MAX_LIST_OBJS 100
-    int r = list_op.list_objects(MAX_LIST_OBJS, &objs, NULL, &is_truncated);
+    int r ;
+    if(list_type != 2) r = list_op.list_objects(MAX_LIST_OBJS, &objs, NULL, &is_truncated);
+    else  r = list_op.list_objects_v2(MAX_LIST_OBJS, &objs, NULL, &is_truncated);
     if (r < 0) {
       return r;
     }
@@ -2668,7 +2670,8 @@ void RGWListBucket::execute()
   list_op.params.list_versions = list_versions;
   list_op.params.allow_unordered = allow_unordered;
 
-  op_ret = list_op.list_objects(max, &objs, &common_prefixes, &is_truncated);
+  if(list_type != 2)op_ret = list_op.list_objects(max, &objs, &common_prefixes, &is_truncated);
+  else op_ret = list_op.list_objects_v2(max, &objs, &common_prefixes, &is_truncated);
   if (op_ret >= 0) {
     next_marker = list_op.get_next_marker();
   }

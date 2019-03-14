@@ -1578,7 +1578,8 @@ int do_check_object_locator(const string& tenant_name, const string& bucket_name
 
   f->open_array_section("check_objects");
   do {
-    ret = list_op.list_objects(max_entries - count, &result, &common_prefixes, &truncated);
+    if(list_type != 2)ret = list_op.list_objects(max_entries - count, &result, &common_prefixes, &truncated);
+    else {ret = list_op.list_objects_v2(max_entries - count, &result, &common_prefixes, &truncated);}
     if (ret < 0) {
       cerr << "ERROR: store->list_objects(): " << cpp_strerror(-ret) << std::endl;
       return -ret;
@@ -5446,7 +5447,8 @@ int main(int argc, const char **argv)
       list_op.params.list_versions = true;
 
       do {
-        ret = list_op.list_objects(max_entries - count, &result, &common_prefixes, &truncated);
+        if(list_type != 2)ret = list_op.list_objects(max_entries - count, &result, &common_prefixes, &truncated);
+        else ret = list_op.list_objects_v2(max_entries - count, &result, &common_prefixes, &truncated);
         if (ret < 0) {
           cerr << "ERROR: store->list_objects(): " << cpp_strerror(-ret) << std::endl;
           return -ret;

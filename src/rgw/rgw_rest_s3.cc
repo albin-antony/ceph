@@ -1056,6 +1056,7 @@ void RGWListBucket_ObjStore_S3v2::send_response()
    if (op_ret >= 0) {
   vector<rgw_bucket_dir_entry>::iterator iter;
   for (iter = objs.begin(); iter != objs.end(); ++iter) {
+      ldpp_dout(this, 0)<< "Inside Contents loop" << dendl;
       rgw_obj_key key(iter->key);
       s->formatter->open_array_section("Contents");
       if (encode_key) {

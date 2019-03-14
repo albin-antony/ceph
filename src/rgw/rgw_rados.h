@@ -1797,6 +1797,14 @@ public:
 				 vector<rgw_bucket_dir_entry> *result,
 				 map<string, bool> *common_prefixes,
 				 bool *is_truncated);
+      int list_objects_v2_ordered(int64_t max,
+             vector<rgw_bucket_dir_entry> *result,
+             map<string, bool> *common_prefixes,
+             bool *is_truncated);
+      int list_objects_v2_unordered(int64_t max,
+         vector<rgw_bucket_dir_entry> *result,
+         map<string, bool> *common_prefixes,
+         bool *is_truncated);
 
     public:
 
@@ -1832,6 +1840,19 @@ public:
 	  return list_objects_ordered(max, result, common_prefixes,
 				      is_truncated);
 	}
+      }
+
+          int list_objects_v2(int64_t max,
+           vector<rgw_bucket_dir_entry> *result,
+           map<string, bool> *common_prefixes,
+           bool *is_truncated) {
+  if (params.allow_unordered) {
+    return list_objects_v2_unordered(max, result, common_prefixes,
+          is_truncated);
+  } else {
+    return list_objects_v2_ordered(max, result, common_prefixes,
+              is_truncated);
+  }
       }
       rgw_obj_key& get_next_marker() {
         return next_marker;

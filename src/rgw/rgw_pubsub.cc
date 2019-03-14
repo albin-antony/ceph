@@ -426,7 +426,8 @@ int RGWUserPubSub::Sub::list_events(const string& marker, int max_events,
 
   vector<rgw_bucket_dir_entry> objs;
 
-  ret = list_op.list_objects(max_events, &objs, nullptr, &result->is_truncated);
+  if(list_type != 2)ret = list_op.list_objects(max_events, &objs, nullptr, &result->is_truncated);
+  else ret = list_op.list_objects_v2(max_events, &objs, nullptr, &result->is_truncated);
   if (ret < 0) {
     ldout(store->ctx(), 0) << "ERROR: failed to list bucket: bucket=" << sub_conf.dest.bucket_name << " ret=" << ret << dendl;
     return ret;
