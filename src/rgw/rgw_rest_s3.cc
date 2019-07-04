@@ -446,6 +446,8 @@ int RGWPutObjTags_ObjStore_S3::get_params()
   if (r < 0)
     return r;
 
+
+
   if (!parser.parse(data.c_str(), data.length(), 1)) {
     return -ERR_MALFORMED_XML;
   }
