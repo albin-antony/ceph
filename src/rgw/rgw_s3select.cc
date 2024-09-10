@@ -539,8 +539,8 @@ int RGWSelectObj_ObjStore_S3::run_s3select_on_json(const char* query, const char
 
   m_aws_response_handler.init_response();
 
-  //the JSON data-type should be(currently) only DOCUMENT
-  if (m_json_datatype.compare("DOCUMENT") != 0) {
+  //the JSON data-type should be only DOCUMENT or LINES
+  if (m_json_datatype.compare("DOCUMENT") != 0 && m_json_datatype.compare("LINES") != 0) {
     const char* s3select_json_error_msg = "s3-select query: wrong json dataType should use DOCUMENT; ";
     m_aws_response_handler.send_error_response_rgw_formatter(s3select_json_error,
       s3select_json_error_msg);
@@ -572,7 +572,11 @@ int RGWSelectObj_ObjStore_S3::run_s3select_on_json(const char* query, const char
   uint32_t length_before_processing = m_aws_response_handler.get_sql_result().size();
   //query is correct(syntax), processing is starting.
   try {
-    status = m_s3_json_object.run_s3select_on_stream(m_aws_response_handler.get_sql_result(), input, input_length, m_object_size_for_processing);
+    if(m_json_datatype.compare("LINES") == 0) {
+      status = m_s3_json_object.run_s3select_on_stream_jsonl(m_aws_response_handler.get_sql_result(), input, input_length, m_object_size_for_processing);
+    } else {
+      status = m_s3_json_object.run_s3select_on_stream(m_aws_response_handler.get_sql_result(), input, input_length, m_object_size_for_processing);
+    }
   } catch(base_s3select_exception& e) {
     ldpp_dout(this, 10) << "S3select: failed to process JSON object: " << e.what() << dendl;
     m_aws_response_handler.get_sql_result().append(e.what());
